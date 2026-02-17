@@ -1,0 +1,20 @@
+supervisor:
+  maxRestarts: 5
+  restartDelay: 2s
+  portTimeout: 30s
+
+services:
+  - name: METAL_SERVER
+    command: sh
+    args:
+      - -c
+      - echo 'Hardware init...'; sleep 5; nc -l -p 3000
+    port: 3000
+
+  - name: METAL_CLIENT
+    command: ping
+    args:
+      - -c
+      - "5"
+      - localhost
+    dependsOn: METAL_SERVER
