@@ -8,7 +8,7 @@ services:
     command: sh
     args:
       - -c
-      - echo 'Hardware init...'; sleep 5; nc -l -p 3000
+      - echo 'Hardware init...'; sleep 4; nc -l -p 3000
     port: 3000
 
   - name: METAL_CLIENT
@@ -18,3 +18,41 @@ services:
       - "5"
       - localhost
     dependsOn: METAL_SERVER
+
+  - name: WEB_SERVER
+    command: sh
+    args:
+      - -c
+      - |
+        echo "[web] Starting server on port 8080..."
+        echo "[web] Loading config..."
+        sleep 1
+        echo "[web] Listening for connections..."
+        sleep 10
+
+  - name: WORKER
+    command: sh
+    args:
+      - -c
+      - |
+        echo "[worker] Starting background job processor..."
+        sleep 1
+        echo "[worker] Waiting for tasks..."
+        sleep 1
+        echo "[worker] Processing task #1..."
+        sleep 1
+        echo "[worker] Processing task #2..."
+        sleep 1
+        echo "[worker] All done"
+
+  - name: LOGGER
+    command: sh
+    args:
+      - -c
+      - |
+        i=1
+        while true; do
+          echo "[logger] Tick $i"
+          sleep 2
+          i=$((i+1))
+        done

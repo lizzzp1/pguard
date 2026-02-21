@@ -8,19 +8,17 @@ import (
 )
 
 type Supervisor struct {
-	services   []*Service
-	readyChans map[string]chan struct{}
-	shutdown   chan struct{}
-	wg         sync.WaitGroup
+	services []*Service
+	shutdown chan struct{}
+	wg       sync.WaitGroup
 	SupervisorConfig
 }
 
-func NewSupervisor(services []*Service, readyChans map[string]chan struct{}, cfg SupervisorConfig) *Supervisor {
+func NewSupervisor(services []*Service, cfg SupervisorConfig, shutdown chan struct{}) *Supervisor {
 	return &Supervisor{
 		services:         services,
-		readyChans:       readyChans,
-		shutdown:         make(chan struct{}),
 		SupervisorConfig: cfg,
+		shutdown:         shutdown,
 	}
 }
 

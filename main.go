@@ -31,22 +31,17 @@ func main() {
 		PortTimeout:  cfg.Supervisor.PortTimeout,
 	}
 
-	readyChans := make(map[string]chan struct{})
-	for _, svcCfg := range cfg.Services {
-		readyChans[svcCfg.Name] = make(chan struct{})
+	shutdownCh := make(chan struct{})
+
+	services := make([]*Service, len(cfg.Services))
+	sup := NewSupervisor(services, supervisorCfg, shutdownCh)
+
+	for i, svcCfg := range cfg.Services {
+		services[i] = NewService(svcCfg, shutdownCh, supervisorCfg)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-
-	shutdownCh := make(chan struct{})
-
-	services := make([]*Service, len(cfg.Services))
-	for i, svcCfg := range cfg.Services {
-		services[i] = NewService(svcCfg, readyChans, shutdownCh, supervisorCfg)
-	}
-
-	sup := NewSupervisor(services, readyChans, supervisorCfg)
 
 	go func() {
 		<-ctx.Done()

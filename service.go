@@ -23,14 +23,14 @@ type Service struct {
 	readyChans    map[string]chan struct{}
 	cmd           *exec.Cmd
 	shutdownCh    chan struct{}
+	pty           *PTY
 	restartCount  int
 	supervisorCfg SupervisorConfig
 }
 
-func NewService(cfg ServiceConfig, readyChans map[string]chan struct{}, shutdownCh chan struct{}, supervisorCfg SupervisorConfig) *Service {
+func NewService(cfg ServiceConfig, shutdownCh chan struct{}, supervisorCfg SupervisorConfig) *Service {
 	return &Service{
 		Config:        cfg,
-		readyChans:    readyChans,
 		shutdownCh:    shutdownCh,
 		supervisorCfg: supervisorCfg,
 	}
@@ -39,6 +39,8 @@ func NewService(cfg ServiceConfig, readyChans map[string]chan struct{}, shutdown
 func (s *Service) Start(ctx context.Context) error {
 	s.waitForDependencies()
 
+	s.readyChans = s.createReadyChan()
+
 	cmd := exec.CommandContext(ctx, s.Config.Command, s.Config.Args...)
 
 	if s.Config.Dir != "" {
@@ -46,21 +48,46 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
+		Setsid: true,
 	}
 
-	if err := cmd.Start(); err != nil {
+	pty, err := SetupPTY(cmd)
+
+	if err != nil {
 		return fmt.Errorf("[%s] Failed to start: %w", s.Config.Name, err)
 	}
 
 	s.cmd = cmd
+	s.pty = pty
+
 	fmt.Printf("[%s] Started with PID %d\n", s.Config.Name, cmd.Process.Pid)
 
 	if s.Config.Port > 0 {
 		s.waitForPort()
 	}
 
+	s.LogOutput(pty)
+
 	return nil
+}
+
+func (s *Service) createReadyChan() map[string]chan struct{} {
+	readyChans := make(map[string]chan struct{})
+	readyChans[s.Config.Name] = make(chan struct{})
+
+	return readyChans
+}
+
+func (s *Service) LogOutput(pty *PTY) {
+	go func() {
+		for {
+			line, err := pty.Reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			fmt.Print("[" + s.Config.Name + "] " + line)
+		}
+	}()
 }
 
 func (s *Service) waitForDependencies() {
@@ -78,14 +105,16 @@ func (s *Service) waitForDependencies() {
 }
 
 func (s *Service) waitForPort() {
-	go func() {
-		defer close(s.readyChans[s.Config.Name])
+	name := s.Config.Name
+	ch := s.readyChans[name]
 
+	go func() {
+		defer close(ch)
 		if ok := s.waitForPortWithTimeout(); ok {
-			fmt.Printf("[%s] Port %d is ready\n", s.Config.Name, s.Config.Port)
+			fmt.Printf("[%s] Port %d is ready\n", name, s.Config.Port)
 			return
 		}
-		fmt.Printf("[%s] Timeout exceeded waiting for port %d\n", s.Config.Name, s.Config.Port)
+		fmt.Printf("[%s] Timeout exceeded waiting for port %d\n", name, s.Config.Port)
 	}()
 }
 
@@ -114,6 +143,9 @@ func (s *Service) Stop() {
 	if s.cmd != nil && s.cmd.Process != nil {
 		fmt.Printf("[%s] Stopping (PID %d)...\n", s.Config.Name, s.cmd.Process.Pid)
 		syscall.Kill(-s.cmd.Process.Pid, syscall.SIGTERM)
+	}
+	if s.pty != nil {
+		s.pty.Close()
 	}
 }
 
