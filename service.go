@@ -16,6 +16,7 @@ type ServiceConfig struct {
 	Dir       string
 	Port      int
 	DependsOn string
+	Color     string
 }
 
 type Service struct {
@@ -85,7 +86,7 @@ func (s *Service) LogOutput(pty *PTY) {
 			if err != nil {
 				return
 			}
-			fmt.Print("[" + s.Config.Name + "] " + line)
+			fmt.Printf("%s[%s]\033[0m %s", s.Config.Color, s.Config.Name, line)
 		}
 	}()
 }

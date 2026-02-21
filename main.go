@@ -9,6 +9,17 @@ import (
 	"syscall"
 )
 
+var (
+	colors   = []string{"\033[32m", "\033[34m", "\033[35m", "\033[36m", "\033[33m", "\033[31m", "\033[92m", "\033[94m", "\033[95m", "\033[96m"}
+	colorIdx int
+)
+
+func getColor() string {
+	color := colors[colorIdx%len(colors)]
+	colorIdx++
+	return color
+}
+
 func main() {
 	configPath := flag.String("config", "", "Path to YAML config file")
 	flag.Parse()
@@ -37,6 +48,7 @@ func main() {
 	sup := NewSupervisor(services, supervisorCfg, shutdownCh)
 
 	for i, svcCfg := range cfg.Services {
+		svcCfg.Color = getColor()
 		services[i] = NewService(svcCfg, shutdownCh, supervisorCfg)
 	}
 
