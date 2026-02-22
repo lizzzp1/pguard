@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log"
+	"os/exec"
 	"sync"
 	"time"
 )
@@ -29,7 +30,7 @@ func (s *Supervisor) Run(ctx context.Context) {
 	}
 
 	s.wg.Wait()
-	fmt.Println("[pguard] All services stopped.")
+	log.Printf("[%s] All services stopped.", timestamp())
 }
 
 func (s *Supervisor) monitorAndRestart(ctx context.Context, svc *Service) {
@@ -42,25 +43,28 @@ func (s *Supervisor) monitorAndRestart(ctx context.Context, svc *Service) {
 		}
 
 		if err := svc.Start(ctx); err != nil {
-			fmt.Printf("[%s] Failed to start: %v\n", svc.Config.Name, err)
+			log.Printf("[%s] %s Failed to start: %v", timestamp(), svc.Config.Name, err)
 		}
 
 		err := svc.Wait()
+		exitCode := 0
 		if err != nil {
-			fmt.Printf("[%s] Process exited: %v\n", svc.Config.Name, err)
+			if ee, ok := err.(*exec.ExitError); ok {
+				exitCode = ee.ProcessState.ExitCode()
+			}
 		}
+		log.Printf("[%s] %s Process exited with code %d", timestamp(), svc.Config.Name, exitCode)
 
 		if s.shouldStop(ctx) {
 			return
 		}
 
 		if !svc.ShouldRestart(s.SupervisorConfig.MaxRestarts) {
-			fmt.Printf("[%s] Max restarts (%d) exceeded, giving up\n", svc.Config.Name, s.SupervisorConfig.MaxRestarts)
-			s.Shutdown()
+			log.Printf("[%s] %s Max restarts (%d) exceeded, giving up", timestamp(), svc.Config.Name, s.SupervisorConfig.MaxRestarts)
 			return
 		}
 
-		fmt.Printf("[%s] Restarting in %v (attempt %d/%d)\n", svc.Config.Name, s.SupervisorConfig.RestartDelay, svc.RestartCount(), s.SupervisorConfig.MaxRestarts)
+		log.Printf("[%s] [RESTART] %s Restarting in %v (attempt %d/%d)", timestamp(), svc.Config.Name, s.SupervisorConfig.RestartDelay, svc.RestartCount(), s.SupervisorConfig.MaxRestarts)
 
 		select {
 		case <-s.shutdown:

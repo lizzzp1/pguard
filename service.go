@@ -3,11 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"os/exec"
 	"syscall"
 	"time"
 )
+
+func timestamp() string {
+	return time.Now().Format("15:04:05")
+}
 
 type ServiceConfig struct {
 	Name      string
@@ -15,13 +20,15 @@ type ServiceConfig struct {
 	Args      []string
 	Dir       string
 	Port      int
+	Host      string
 	DependsOn string
 	Color     string
 }
 
 type Service struct {
 	Config        ServiceConfig
-	readyChans    map[string]chan struct{}
+	services      []*Service
+	readyChan     chan struct{}
 	cmd           *exec.Cmd
 	shutdownCh    chan struct{}
 	pty           *PTY
@@ -29,9 +36,10 @@ type Service struct {
 	supervisorCfg SupervisorConfig
 }
 
-func NewService(cfg ServiceConfig, shutdownCh chan struct{}, supervisorCfg SupervisorConfig) *Service {
+func NewService(cfg ServiceConfig, services []*Service, shutdownCh chan struct{}, supervisorCfg SupervisorConfig) *Service {
 	return &Service{
 		Config:        cfg,
+		services:      services,
 		shutdownCh:    shutdownCh,
 		supervisorCfg: supervisorCfg,
 	}
@@ -40,7 +48,7 @@ func NewService(cfg ServiceConfig, shutdownCh chan struct{}, supervisorCfg Super
 func (s *Service) Start(ctx context.Context) error {
 	s.waitForDependencies()
 
-	s.readyChans = s.createReadyChan()
+	s.readyChan = s.createReadyChan()
 
 	cmd := exec.CommandContext(ctx, s.Config.Command, s.Config.Args...)
 
@@ -61,7 +69,12 @@ func (s *Service) Start(ctx context.Context) error {
 	s.cmd = cmd
 	s.pty = pty
 
-	fmt.Printf("[%s] Started with PID %d\n", s.Config.Name, cmd.Process.Pid)
+	dir := s.Config.Dir
+	if dir == "" {
+		dir = "."
+	}
+	log.Printf("[%s] %s Starting: %s %v (dir: %s)", timestamp(), s.Config.Name, s.Config.Command, s.Config.Args, dir)
+	log.Printf("[%s] %s Started with PID %d", timestamp(), s.Config.Name, cmd.Process.Pid)
 
 	if s.Config.Port > 0 {
 		s.waitForPort()
@@ -72,11 +85,8 @@ func (s *Service) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) createReadyChan() map[string]chan struct{} {
-	readyChans := make(map[string]chan struct{})
-	readyChans[s.Config.Name] = make(chan struct{})
-
-	return readyChans
+func (s *Service) createReadyChan() chan struct{} {
+	return make(chan struct{})
 }
 
 func (s *Service) LogOutput(pty *PTY) {
@@ -86,7 +96,7 @@ func (s *Service) LogOutput(pty *PTY) {
 			if err != nil {
 				return
 			}
-			fmt.Printf("%s[%s]\033[0m %s", s.Config.Color, s.Config.Name, line)
+			log.Printf("%s %s[%s]\033[0m %s", timestamp(), s.Config.Color, s.Config.Name, line)
 		}
 	}()
 }
@@ -96,26 +106,26 @@ func (s *Service) waitForDependencies() {
 		return
 	}
 
-	fmt.Printf("[%s] Waiting for %s to be ready...\n", s.Config.Name, s.Config.DependsOn)
+	log.Printf("[%s] %s Waiting for %s to be ready...", timestamp(), s.Config.Name, s.Config.DependsOn)
 
-	if ch, ok := s.readyChans[s.Config.DependsOn]; ok {
-		<-ch
+	for _, svc := range s.services {
+		if svc.Config.Name == s.Config.DependsOn {
+			<-svc.readyChan
+			break
+		}
 	}
 
-	fmt.Printf("[%s] %s is ready, starting...\n", s.Config.Name, s.Config.DependsOn)
+	log.Printf("[%s] %s %s is ready, starting...", timestamp(), s.Config.Name, s.Config.DependsOn)
 }
 
 func (s *Service) waitForPort() {
-	name := s.Config.Name
-	ch := s.readyChans[name]
-
 	go func() {
-		defer close(ch)
+		defer close(s.readyChan)
 		if ok := s.waitForPortWithTimeout(); ok {
-			fmt.Printf("[%s] Port %d is ready\n", name, s.Config.Port)
+			log.Printf("[%s] %s Port %d is ready", timestamp(), s.Config.Name, s.Config.Port)
 			return
 		}
-		fmt.Printf("[%s] Timeout exceeded waiting for port %d\n", name, s.Config.Port)
+		log.Printf("[%s] %s Timeout exceeded waiting for port %d", timestamp(), s.Config.Name, s.Config.Port)
 	}()
 }
 
@@ -124,7 +134,7 @@ func (s *Service) waitForPortWithTimeout() bool {
 	expiry := time.Now().Add(timeout)
 
 	for time.Now().Before(expiry) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", s.Config.Port), 500*time.Millisecond)
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", s.Config.Host, s.Config.Port), 500*time.Millisecond)
 		if err == nil {
 			conn.Close()
 			return true
@@ -142,12 +152,11 @@ func (s *Service) waitForPortWithTimeout() bool {
 
 func (s *Service) Stop() {
 	if s.cmd != nil && s.cmd.Process != nil {
-		fmt.Printf("[%s] Stopping (PID %d)...\n", s.Config.Name, s.cmd.Process.Pid)
+		log.Printf("[%s] %s Stopping (PID %d)...", timestamp(), s.Config.Name, s.cmd.Process.Pid)
 		syscall.Kill(-s.cmd.Process.Pid, syscall.SIGTERM)
+		s.cmd.Wait()
 	}
-	if s.pty != nil {
-		s.pty.Close()
-	}
+	s.pty.Close()
 }
 
 func (s *Service) PID() int {
